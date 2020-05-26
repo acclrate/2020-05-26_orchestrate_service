@@ -50,3 +50,19 @@ module.exports.getLastContractAddress = async (requestId) => {
     return recordFound.value;
 }
 
+module.exports.getContractsDeployed = async (chainName) => {
+    const AppVariable = mongoose.model('appvariable');
+    const recordFound = await AppVariable.find({ reference: chainName });
+    console.log("\nFound contracts:", recordFound);
+    return recordFound;
+}
+
+module.exports.getContractAddress = async (chainName, contractName) => {
+    const AppVariable = mongoose.model('appvariable');
+    const recordFound = await AppVariable.findOne({
+        key: contractName + 'ContractAddress',
+        reference: chainName
+    });
+    console.log("\nFound contract:", recordFound);
+    return recordFound.value;
+}

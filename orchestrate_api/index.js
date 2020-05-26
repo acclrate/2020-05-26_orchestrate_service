@@ -34,10 +34,6 @@ const userRouter = require('./routes/web_user');
 app.use('/', userRouter);
 const orchestrateRouter = require('./routes/api_orchestrate');
 app.use('/', orchestrateRouter);
-const setupRouter = require('./routes/api_setup');
-app.use('/', setupRouter);
-const contractRouter = require('./routes/api_contract');
-app.use('/', contractRouter);
 
 console.log("Express running on port " + keys.expressPort);
 

@@ -1,10 +1,9 @@
 
 const mongoose = require('mongoose');
 const axios = require('axios'); // npm install --save axios
-
 const pegasysOrchestrate = require('pegasys-orchestrate'); // npm install pegasys-orchestrate
-const ContractRegistry = pegasysOrchestrate.ContractRegistry;
 const AccountGenerator = pegasysOrchestrate.AccountGenerator;
+const ContractRegistry = pegasysOrchestrate.ContractRegistry;
 const Producer = pegasysOrchestrate.Producer;
 const Consumer = pegasysOrchestrate.Consumer;
 const EventType = pegasysOrchestrate.EventType;
@@ -17,97 +16,8 @@ const EEAClient = require("./eeaclient");
 
 const keys = require("../keys.js");
 const appVariableService = require("./appVariable");
-
-
-
-const registerContract = async (contractArtifact) => {
-    try {
-        let res;
-        let req;
-
-        const contractRegistry = new ContractRegistry(keys.orchestrateDomain + ':' + keys.orchestrateContractRegistryPort);
-
-        console.log("\nRegistering contract...");
-        // Register Contract
-        req = {
-            name: contractArtifact.contractName,
-            tag: 'latest',
-            abi: contractArtifact.abi,
-            bytecode: contractArtifact.bytecode,
-            deployedBytecode: contractArtifact.deployedBytecode
-
-        };
-        // This line can be uncommented to register a new contract
-        res = await contractRegistry.register(req);
-        console.log("\nRegister response (this is usually empty)\n", res);
-
-        // Get contract
-        console.log("Trying to get contract details back from the registry\n", contractArtifact.contractName);
-        res = await contractRegistry.get(contractArtifact.contractName);
-        console.log("Contract details\n", res);
-
-    } catch (e) {
-        console.log(e);
-        return;
-    };
-}
-
-
-const deployContract = async (chainName, contractName, walletAddress) => {
-    try {
-        console.log("\n\n\nPreparing to deploy contract...");
-        const producer = new Producer([keys.orchestrateDomain + ':' + keys.orchestrateMessagePort]);
-        await producer.connect();
-
-        console.log("From account", walletAddress);
-
-        // Deploy a new  contract and returns the ID of the request
-        const requestId = await producer.sendTransaction({
-            chainName: chainName,
-            contractName: contractName,
-            contractTag: 'latest',
-            methodSignature: 'constructor()',
-            from: walletAddress,
-            gas: 2000000
-        });
-
-        console.log('Transaction request sent with id: ', requestId);
-
-        await producer.disconnect();
-        return requestId;
-
-    } catch (e) {
-        console.log(e);
-        return;
-    };
-
-}
-
-
-module.exports.registerDeployContract = async (reqbody) => {
-    // Extract parameters
-    const chainName = reqbody.chainName;
-    const contractName = reqbody.contractName;
-    const walletNumber = reqbody.walletNumber;
-
-    // Process actions
-    const contractArtifactFile = "../smart_contracts/" + contractName + ".json";
-    const contractArtifact = require(contractArtifactFile);
-    const walletAddress = await appVariableService.getWalletAddress(walletNumber);
-
-    await registerContract(contractArtifact);
-    const requestId = await deployContract(chainName, contractName, walletAddress);
-    const contractAddress = await appVariableService.getLastContractAddress(requestId);
-
-    // Save contract address
-    await appVariableService.storeOrReplaceVariable(
-        contractName + "ContractAddress",
-        contractAddress,
-        "latest"
-    );
-
-    return contractAddress;
-}
+const orchestrateChain = require("./orchestrateChain");
+const orchestrateContract = require("./orchestrateContract");
 
 
 const writeContractHelper = async (chainName, contractName, contractAddress, walletAddress, methodSignature, args) => {
@@ -140,17 +50,16 @@ const writeContractHelper = async (chainName, contractName, contractAddress, wal
 }
 
 
-module.exports.writeContract = async (reqbody) => {
+module.exports.writeTransaction = async (reqbody) => {
     // Extract parameters
     const chainName = reqbody.chainName;
     const contractName = reqbody.contractName;
-    const walletNumber = reqbody.walletNumber;
+    const walletAddress = reqbody.walletAddress;
     const methodSignature = reqbody.methodSignature;
     const args = reqbody.args;
 
     // Process actions
-    const contractAddress = await appVariableService.getVariable(contractName + "ContractAddress", "latest");
-    const walletAddress = await appVariableService.getWalletAddress(walletNumber);
+    const contractAddress = await appVariableService.getContractAddress(chainName, contractName);
     const requestId = await writeContractHelper(
         chainName,
         contractName,
@@ -159,37 +68,38 @@ module.exports.writeContract = async (reqbody) => {
         methodSignature,
         args
     );
-    return requestId;
+    return {
+        requestId: requestId
+    };
 }
 
 
-module.exports.batchWriteContract = async (reqbody) => {
+module.exports.readTransaction = async (reqbody) => {
     // Extract parameters
     const chainName = reqbody.chainName;
     const contractName = reqbody.contractName;
-    const walletNumber = reqbody.walletNumber;
-    const methodSignature = reqbody.methodSignature;
-    const args = reqbody.args;
-    const nTimes = reqbody.nTimes;
+    const methodName = reqbody.methodName;
+    const networkNumber = reqbody.networkNumber; // 2018
 
-    // Process actions
-    const contractAddress = await appVariableService.getVariable(contractName + "ContractAddress", "latest");
-    const walletAddress = await appVariableService.getWalletAddress(walletNumber);
-    let requestId;
+    // Select node
+    const nodeObject = await orchestrateChain.getChain(chainName);
+    const nodeUrl = nodeObject.urls[0];
+    console.log("Node URL", nodeUrl);
+    const web3 = new EEAClient(new Web3(nodeUrl), networkNumber);
+
+    // Select contract
+    const contractAddress = await appVariableService.getContractAddress(chainName, contractName);
+    const contractArtifact = await orchestrateContract.getContract(contractName);
+    const contractAbi = contractArtifact.abi;
+    const contractInstance = new web3.eth.Contract(contractAbi, contractAddress);
+
+    // Call method
+    const res = await contractInstance.methods[methodName]().call();
     const startTime = new Date();
-    for (let i = 0; i < nTimes; i++) {
-        requestId = await writeContractHelper(
-            chainName,
-            contractName,
-            contractAddress,
-            walletAddress,
-            methodSignature,
-            args
-        );
+    console.log("Result\n", res);
+    const decodedRes = {
+        counter: res,
+        timestamp: startTime.toISOString()
     }
-    const endTime = new Date();
-    const timeElapsed = (endTime - startTime) / 1000;
-    return ("Dispatched " + nTimes + " transactions in " + timeElapsed + " seconds. Finished at " + endTime.toISOString());
+    return decodedRes;
 }
-
-
